@@ -83,23 +83,28 @@ namespace ChillWithYou.ModelChanger.Patches
                     skinnedRenderer.bones = originalRenderer.bones;
                     skinnedRenderer.rootBone = originalRenderer.rootBone;
                     skinnedRenderer.localBounds = originalRenderer.localBounds;
-                }
 
-                // Apply material with texture
-                var material = new Material(Shader.Find("Standard"));
+                    // Clone the original material instead of creating a new one
+                    var material = new Material(originalRenderer.sharedMaterial);
 
-                // Load and apply the main texture
-                if (!string.IsNullOrEmpty(modelData.TexturePath) && File.Exists(modelData.TexturePath))
-                {
-                    var texture = ImageLoader.LoadTexture(modelData.TexturePath);
-                    if (texture != null)
+                    // Load and apply the main texture
+                    if (!string.IsNullOrEmpty(modelData.TexturePath) && File.Exists(modelData.TexturePath))
                     {
-                        material.mainTexture = texture;
-                        ModelChangerPlugin.Log?.LogInfo($"Loaded texture: {Path.GetFileName(modelData.TexturePath)}");
+                        var texture = ImageLoader.LoadTexture(modelData.TexturePath);
+                        if (texture != null)
+                        {
+                            material.mainTexture = texture;
+                            ModelChangerPlugin.Log?.LogInfo($"Loaded texture: {Path.GetFileName(modelData.TexturePath)}");
+                        }
                     }
-                }
 
-                skinnedRenderer.material = material;
+                    skinnedRenderer.material = material;
+                }
+                else
+                {
+                    ModelChangerPlugin.Log?.LogError("Original renderer not found - cannot copy material/bones");
+                    return;
+                }
 
                 ModelChangerPlugin.CurrentCharacterObject = customModel;
                 ModelChangerPlugin.Log?.LogInfo($"Successfully loaded model: {modelData.Name}");
