@@ -6,6 +6,15 @@ using Assimp; // Requires AssimpNet.dll
 
 namespace ChillWithYou.ModelChanger
 {
+    public static class ImageConversion
+    {
+        public static bool LoadImage(Texture2D tex, byte[] data)
+        {
+            // Unity 2018+ has ImageConversion.LoadImage as a static method
+            // For Unity 2022, it's in UnityEngine.ImageConversion
+            return tex.LoadImage(data);
+        }
+    }
     public static class ImageLoader
     {
         public static Texture2D LoadTexture(string filePath)
@@ -13,8 +22,20 @@ namespace ChillWithYou.ModelChanger
             if (!File.Exists(filePath)) return null;
             byte[] fileData = File.ReadAllBytes(filePath);
             Texture2D tex = new Texture2D(2, 2);
-            tex.LoadImage(fileData); // LoadImage is an instance method in Unity 2017-2018
-            return tex;
+
+            // Try newer Unity method first (2018+)
+            try
+            {
+                ImageConversion.LoadImage(tex, fileData);
+                return tex;
+            }
+            catch
+            {
+                // Fallback: manual loading for older Unity
+                // This is a basic fallback - may not work for all formats
+                ModelChangerPlugin.Log?.LogWarning($"Failed to load texture: {filePath}");
+                return null;
+            }
         }
     }
 
@@ -56,7 +77,13 @@ namespace ChillWithYou.ModelChanger
 
         public static UnityEngine.Mesh[] LoadFBX(string path)
         {
-            if (!File.Exists(path)) return null;
+            if (!File.Exists(path))
+            {
+                ModelChangerPlugin.Log?.LogError($"FBX file not found: {path}");
+                return null;
+            }
+
+            ModelChangerPlugin.Log?.LogInfo($"Attempting to load FBX: {path}");
 
             using (var importer = new AssimpContext())
             {
@@ -68,10 +95,25 @@ namespace ChillWithYou.ModelChanger
                              PostProcessSteps.MakeLeftHanded;
 
                 Scene scene;
-                try { scene = importer.ImportFile(path, config); }
-                catch { return null; }
+                try
+                {
+                    scene = importer.ImportFile(path, config);
+                    ModelChangerPlugin.Log?.LogInfo($"Assimp import successful. HasMeshes: {scene?.HasMeshes}");
+                }
+                catch (System.Exception ex)
+                {
+                    ModelChangerPlugin.Log?.LogError($"Assimp import failed: {ex.Message}");
+                    ModelChangerPlugin.Log?.LogError($"Stack trace: {ex.StackTrace}");
+                    return null;
+                }
 
-                if (scene == null || !scene.HasMeshes) return null;
+                if (scene == null || !scene.HasMeshes)
+                {
+                    ModelChangerPlugin.Log?.LogError($"Scene is null or has no meshes");
+                    return null;
+                }
+
+                ModelChangerPlugin.Log?.LogInfo($"Processing {scene.Meshes.Count} meshes from FBX");
 
                 List<UnityEngine.Mesh> resultMeshes = new List<UnityEngine.Mesh>();
 

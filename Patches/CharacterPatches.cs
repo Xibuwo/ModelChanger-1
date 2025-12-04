@@ -4,7 +4,6 @@ using Bulbul;
 using System.Linq;
 using System.Collections.Generic;
 using System.IO;
-using ChillWithYou.ModelChanger; // Add this line
 
 namespace ChillWithYou.ModelChanger.Patches
 {
@@ -37,10 +36,11 @@ namespace ChillWithYou.ModelChanger.Patches
                 ModelChangerPlugin.CurrentCharacterObject = null;
             }
 
-            LoadAndSwapCustomModel(__instance.gameObject, modelData);
+            ApplyModelToCharacter(__instance.gameObject, modelData);
         }
 
-        private static void LoadAndSwapCustomModel(GameObject rootObject, ModelData modelData)
+        // Made public so UI can call it directly
+        public static void ApplyModelToCharacter(GameObject rootObject, ModelData modelData)
         {
             try
             {
@@ -69,7 +69,7 @@ namespace ChillWithYou.ModelChanger.Patches
                 customModel.transform.localScale = Vector3.one;
 
                 // Build the mesh with bone mapping from the original character
-                var sourceMesh = meshes[0]; // Use first mesh or combine if needed
+                var sourceMesh = meshes[0];
                 var customMesh = AssetLoader.BuildMesh(sourceMesh, new AssetLoader.ArmatureData(rootObject));
 
                 // Set up the skinned mesh renderer
