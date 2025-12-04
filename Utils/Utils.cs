@@ -13,9 +13,8 @@ namespace ChillWithYou.ModelChanger
             if (!File.Exists(filePath)) return null;
             byte[] fileData = File.ReadAllBytes(filePath);
             Texture2D tex = new Texture2D(2, 2);
-            // LoadImage auto-resizes texture dimensions
-            if (tex.LoadImage(fileData)) return tex;
-            return null;
+            tex.LoadImage(fileData); // LoadImage is an instance method in Unity 2017-2018
+            return tex;
         }
     }
 
@@ -89,9 +88,12 @@ namespace ChillWithYou.ModelChanger
                     if (aMesh.HasNormals)
                         uMesh.normals = aMesh.Normals.Select(n => new Vector3(n.X, n.Y, n.Z)).ToArray();
 
-                    // 3. UVs
+                    // 3. UVs - Fixed method call
                     if (aMesh.HasTextureCoords(0))
-                        uMesh.uv = aMesh.GetTextureCoords(0).Select(uv => new Vector2(uv.X, uv.Y)).ToArray();
+                    {
+                        var textureCoords = aMesh.TextureCoordinateChannels[0];
+                        uMesh.uv = textureCoords.Select(uv => new Vector2(uv.X, uv.Y)).ToArray();
+                    }
 
                     // 4. Triangles
                     if (aMesh.HasFaces)
@@ -107,16 +109,16 @@ namespace ChillWithYou.ModelChanger
                     {
                         List<BoneWeight> weights = new List<BoneWeight>(new BoneWeight[uMesh.vertexCount]);
                         List<string> boneNamesForThisMesh = new List<string>();
-                        List<Matrix4x4> bindPoses = new List<Matrix4x4>();
+                        List<UnityEngine.Matrix4x4> bindPoses = new List<UnityEngine.Matrix4x4>();
 
                         for (int i = 0; i < aMesh.Bones.Count; i++)
                         {
                             var bone = aMesh.Bones[i];
                             boneNamesForThisMesh.Add(bone.Name);
 
-                            // Convert Assimp Matrix to Unity Matrix
-                            var m = bone.OffsetMatrix;
-                            bindPoses.Add(new Matrix4x4(
+                            // Convert Assimp Matrix to Unity Matrix - Fixed namespace conflict
+                            Assimp.Matrix4x4 m = bone.OffsetMatrix;
+                            bindPoses.Add(new UnityEngine.Matrix4x4(
                                 new Vector4(m.A1, m.B1, m.C1, m.D1),
                                 new Vector4(m.A2, m.B2, m.C2, m.D2),
                                 new Vector4(m.A3, m.B3, m.C3, m.D3),
