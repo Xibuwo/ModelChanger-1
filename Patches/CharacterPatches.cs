@@ -20,6 +20,16 @@ namespace ChillWithYou.ModelChanger.Patches
                     Object.Destroy(ModelChangerPlugin.CurrentCharacterObject);
                     ModelChangerPlugin.CurrentCharacterObject = null;
                 }
+
+                // Re-enable original model
+                var characterRoot = FindCharacterRoot(__instance.gameObject);
+                if (characterRoot != null)
+                {
+                    foreach (var renderer in characterRoot.GetComponentsInChildren<Renderer>(true))
+                    {
+                        renderer.enabled = true;
+                    }
+                }
                 return;
             }
 
@@ -29,8 +39,7 @@ namespace ChillWithYou.ModelChanger.Patches
                 return;
             }
 
-            if (ModelChangerPlugin.CurrentCharacterObject != null &&
-                ModelChangerPlugin.CurrentCharacterObject.transform.parent == __instance.transform)
+            if (ModelChangerPlugin.CurrentCharacterObject != null)
             {
                 Object.Destroy(ModelChangerPlugin.CurrentCharacterObject);
                 ModelChangerPlugin.CurrentCharacterObject = null;
@@ -39,11 +48,59 @@ namespace ChillWithYou.ModelChanger.Patches
             ApplyModelToCharacter(__instance.gameObject, modelData);
         }
 
-        // Made public so UI can call it directly
+        private static Transform FindCharacterRoot(GameObject rootObject)
+        {
+            // Try the expected path first
+            Transform characterRoot = rootObject.transform.Find("Character/Character");
+            if (characterRoot != null) return characterRoot;
+
+            // Search for any transform with SkinnedMeshRenderer children
+            var skinnedRenderers = rootObject.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+            if (skinnedRenderers.Length > 0)
+            {
+                // Find the common parent of all skinned renderers
+                Transform parent = skinnedRenderers[0].transform.parent;
+                if (parent != null)
+                {
+                    return parent;
+                }
+            }
+
+            return null;
+        }
+
         public static void ApplyModelToCharacter(GameObject rootObject, ModelData modelData)
         {
             try
             {
+                // Find the character root
+                Transform characterRoot = FindCharacterRoot(rootObject);
+                if (characterRoot == null)
+                {
+                    ModelChangerPlugin.Log?.LogError("Cannot find character root");
+                    return;
+                }
+
+                ModelChangerPlugin.Log?.LogInfo($"Found character root: {characterRoot.name}");
+
+                // Get the original SkinnedMeshRenderer from any child
+                var originalRenderers = characterRoot.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+                if (originalRenderers.Length == 0)
+                {
+                    ModelChangerPlugin.Log?.LogError("No SkinnedMeshRenderer found in character hierarchy");
+                    return;
+                }
+
+                var originalRenderer = originalRenderers[0];
+                ModelChangerPlugin.Log?.LogInfo($"Reference renderer: {originalRenderer.gameObject.name}, Bones: {originalRenderer.bones.Length}");
+
+                // Log bone names for debugging
+                ModelChangerPlugin.Log?.LogInfo("Game skeleton bones:");
+                for (int i = 0; i < originalRenderer.bones.Length && i < 20; i++)
+                {
+                    ModelChangerPlugin.Log?.LogInfo($"  [{i}] {originalRenderer.bones[i].name}");
+                }
+
                 // Load the FBX mesh
                 var meshes = AssetLoader.LoadFBX(modelData.FBXPath);
                 if (meshes == null || meshes.Length == 0)
@@ -52,66 +109,93 @@ namespace ChillWithYou.ModelChanger.Patches
                     return;
                 }
 
-                // Hide Original Model
-                foreach (var renderer in rootObject.GetComponentsInChildren<Renderer>(true))
+                // Hide all original renderers
+                foreach (var renderer in originalRenderers)
                 {
-                    if (renderer.gameObject != rootObject)
+                    renderer.enabled = false;
+                }
+
+                // Create armature data - use the ROOT bone's parent as the armature root
+                Transform armatureRoot = originalRenderer.rootBone != null ? originalRenderer.rootBone.parent : characterRoot;
+                if (armatureRoot == null) armatureRoot = characterRoot;
+
+                ModelChangerPlugin.Log?.LogInfo($"Using armature root: {armatureRoot.name}");
+                var armatureData = new AssetLoader.ArmatureData(armatureRoot.gameObject);
+
+                // Create parent for all custom mesh parts
+                GameObject customModelParent = new GameObject(modelData.Name + "_CustomModel");
+
+                // Parent to the ARMATURE ROOT, not the character root
+                customModelParent.transform.SetParent(armatureRoot, false);
+                customModelParent.transform.localPosition = Vector3.zero;
+                customModelParent.transform.localRotation = Quaternion.identity;
+                customModelParent.transform.localScale = Vector3.one;
+
+                int meshIndex = 0;
+                Material baseMaterial = null;
+                Texture2D customTexture = null;
+
+                // Load custom texture once if available
+                if (!string.IsNullOrEmpty(modelData.TexturePath) && File.Exists(modelData.TexturePath))
+                {
+                    customTexture = ImageLoader.LoadTexture(modelData.TexturePath);
+                    if (customTexture != null)
                     {
-                        renderer.enabled = false;
+                        ModelChangerPlugin.Log?.LogInfo($"Loaded texture: {Path.GetFileName(modelData.TexturePath)}");
                     }
                 }
 
-                // Create new model instance
-                var customModel = new GameObject(modelData.Name);
-                customModel.transform.SetParent(rootObject.transform, false);
-                customModel.transform.localPosition = Vector3.zero;
-                customModel.transform.localRotation = Quaternion.identity;
-                customModel.transform.localScale = Vector3.one;
-
-                // Build the mesh with bone mapping from the original character
-                var sourceMesh = meshes[0];
-                var customMesh = AssetLoader.BuildMesh(sourceMesh, new AssetLoader.ArmatureData(rootObject));
-
-                // Set up the skinned mesh renderer
-                var skinnedRenderer = customModel.AddComponent<SkinnedMeshRenderer>();
-                skinnedRenderer.sharedMesh = customMesh;
-
-                // Copy bone references from original character
-                var originalRenderer = rootObject.GetComponentInChildren<SkinnedMeshRenderer>();
-                if (originalRenderer != null)
+                // Clone base material once
+                baseMaterial = new Material(originalRenderer.sharedMaterial);
+                if (customTexture != null)
                 {
+                    baseMaterial.mainTexture = customTexture;
+                }
+
+                foreach (var sourceMesh in meshes)
+                {
+                    // Build the mesh with proper bone mapping
+                    var customMesh = AssetLoader.BuildMesh(sourceMesh, armatureData);
+                    if (customMesh == null)
+                    {
+                        ModelChangerPlugin.Log?.LogWarning($"Failed to build mesh {meshIndex}: {sourceMesh.name}");
+                        continue;
+                    }
+
+                    // Create GameObject for this mesh part
+                    var meshPart = new GameObject($"{modelData.Name}_Part{meshIndex}");
+                    meshPart.transform.SetParent(customModelParent.transform, false);
+                    meshPart.transform.localPosition = Vector3.zero;
+                    meshPart.transform.localRotation = Quaternion.identity;
+                    meshPart.transform.localScale = Vector3.one;
+
+                    // Set up the skinned mesh renderer
+                    var skinnedRenderer = meshPart.AddComponent<SkinnedMeshRenderer>();
+                    skinnedRenderer.sharedMesh = customMesh;
+
+                    // CRITICAL: Copy exact bone references
                     skinnedRenderer.bones = originalRenderer.bones;
                     skinnedRenderer.rootBone = originalRenderer.rootBone;
-                    skinnedRenderer.localBounds = originalRenderer.localBounds;
 
-                    // Clone the original material instead of creating a new one
-                    var material = new Material(originalRenderer.sharedMaterial);
+                    // Use original bounds or recalculate
+                    skinnedRenderer.localBounds = customMesh.bounds;
 
-                    // Load and apply the main texture
-                    if (!string.IsNullOrEmpty(modelData.TexturePath) && File.Exists(modelData.TexturePath))
-                    {
-                        var texture = ImageLoader.LoadTexture(modelData.TexturePath);
-                        if (texture != null)
-                        {
-                            material.mainTexture = texture;
-                            ModelChangerPlugin.Log?.LogInfo($"Loaded texture: {Path.GetFileName(modelData.TexturePath)}");
-                        }
-                    }
+                    // Use the shared material
+                    skinnedRenderer.sharedMaterial = baseMaterial;
 
-                    skinnedRenderer.material = material;
-                }
-                else
-                {
-                    ModelChangerPlugin.Log?.LogError("Original renderer not found - cannot copy material/bones");
-                    return;
+                    ModelChangerPlugin.Log?.LogInfo($"Part {meshIndex}: {customMesh.vertexCount} verts, {customMesh.triangles.Length / 3} tris");
+                    meshIndex++;
                 }
 
-                ModelChangerPlugin.CurrentCharacterObject = customModel;
-                ModelChangerPlugin.Log?.LogInfo($"Successfully loaded model: {modelData.Name}");
+                // Store reference
+                ModelChangerPlugin.CurrentCharacterObject = customModelParent;
+
+                ModelChangerPlugin.Log?.LogInfo($"Successfully loaded '{modelData.Name}' with {meshIndex} parts");
             }
             catch (System.Exception ex)
             {
-                ModelChangerPlugin.Log?.LogError($"Failed to load custom model '{modelData.Name}': {ex}");
+                ModelChangerPlugin.Log?.LogError($"Failed to load '{modelData.Name}': {ex}");
+                ModelChangerPlugin.Log?.LogError($"Stack: {ex.StackTrace}");
             }
         }
     }
